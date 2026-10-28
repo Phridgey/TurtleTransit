@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.3.6 (27 October 2026)
+
+### Fixed
+- After a server restart, the timers set from the restart offsets (a first guess) could be shown and shared as if they had been seen. Asking the server's uptime again can give a time one second earlier, which made every guess count as "seen since the restart"; the guesses were then passed to every other OctoBus user as sightings and blocked real shared times from replacing them. Guesses are now marked as such, are never shared, and give way to the first real sighting or shared time. Saved guesses from 1.3.5 are cleaned up at the next login.
+
 ## 1.3.5 (12 October 2026)
 
 ### New

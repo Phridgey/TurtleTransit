@@ -502,6 +502,10 @@ local OB_OK, OB_ERR = pcall(function ()
 
   local function OnBoot(boot)
     local old = DB.boot or DB.bootPrev
+    -- the uptime answer is whole seconds, so the same restart can come out a second
+    -- earlier or later on another ask: keep the first value, or every timer set from it
+    -- would suddenly count as "seen since the restart"
+    if DB.boot and math.abs(boot - DB.boot) <= 5 then boot = DB.boot end
     DB.boot = boot
     DB.bootPrev = nil
     local restarted = old and math.abs(boot - old) > 300
@@ -520,7 +524,12 @@ local OB_OK, OB_ERR = pcall(function ()
       local e = r.entry
       local P = Period(r)
       local c = Phase(r)
-      if c and P and P > 0 and (DB.seenAt[e] or 0) < boot then
+      -- seenAt within a few seconds of the restart was set by the restart itself (nobody
+      -- is logged in that early), not by a sighting. A "shared" time that is exactly the
+      -- old offset again is someone's guess that 1.3.5 passed on as a sighting.
+      local guessed = DB.src[e] == "shared" and DB.anchor[e] and DB.bootPhaseBoot[e] ~= boot and c
+        and math.abs(DB.anchor[e] - boot - c) < 2
+      if c and P and P > 0 and ((DB.seenAt[e] or 0) <= boot + 5 or guessed) then
         DB.anchor[e] = boot + c
         if not DB.origin[e] or DB.origin[e] < boot then
           -- the stored schedule is from an earlier server run: start this run's
@@ -533,13 +542,16 @@ local OB_OK, OB_ERR = pcall(function ()
           DB.lastObs[e] = nil
         end
         DB.corrected[e] = boot
+        -- a guess, not a sighting: never shared, and a real sighting or shared time replaces it
+        DB.src[e] = "guess"
         if restarted and DB.bootTheory then DB.seenAt[e] = boot end   -- "~" instead of "?"
       end
     end
     -- learn offsets from routes already seen since this restart
     for i = 1, table.getn(ROUTES) do
       local r = ROUTES[i]
-      if (DB.seenAt[r.entry] or 0) > boot and DB.anchor[r.entry] then LearnPhase(r, DB.anchor[r.entry]) end
+      local e = r.entry
+      if (DB.seenAt[e] or 0) > boot + 5 and DB.anchor[e] and DB.src[e] ~= "guess" then LearnPhase(r, DB.anchor[e]) end
     end
   end
 
@@ -1887,7 +1899,7 @@ local OB_OK, OB_ERR = pcall(function ()
       for i = 1, table.getn(ROUTES) do
         local e = ROUTES[i].entry
         local a = DB.anchor[e]
-        if a and a > DB.boot and (DB.seenAt[e] or 0) > DB.boot and (DB.src[e] == "dll" or (not own and DB.src[e] == "shared")) then
+        if a and a > DB.boot and (DB.seenAt[e] or 0) > DB.boot + 5 and (DB.src[e] == "dll" or (not own and DB.src[e] == "shared")) then
           table.insert(parts, e .. ":" .. string.format("%.1f", a - DB.boot))
         end
       end
@@ -1912,7 +1924,11 @@ local OB_OK, OB_ERR = pcall(function ()
       if not r or not DB.boot or not CFG.share then return end
       if rel < 0 or rel > time() - DB.boot + 600 then return end
       -- our own DLL sighting in this run wins
-      if DB.src[e] == "dll" and (DB.seenAt[e] or 0) > DB.boot then return end
+      if DB.src[e] == "dll" and (DB.seenAt[e] or 0) > DB.boot + 5 then return end
+      -- a time that is just the restart offset again is someone's guess passed on as a
+      -- sighting (OctoBus 1.3.5 did that): ignore it
+      local c = DB.bootPhaseBoot[e] ~= DB.boot and Phase(r)
+      if c and math.abs(rel - c) < 2 then return end
       local a = DB.boot + rel
       if DB.src[e] == "shared" and DB.anchor[e] and math.abs(DB.anchor[e] - a) < 0.5 then return end
       local P = Period(r)
